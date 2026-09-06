@@ -20,3 +20,5 @@ The private key must NEVER be committed to a public GitHub repository.
 
 ## v4.1
 ה-Worker תומך גם בתזכורות כלליות (חד-פעמיות, יומיות ושבועיות) ובתיאור פעולה/תזכורת בגוף ההתראה.
+
+<!-- redeploy -->
