@@ -4,8 +4,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-06",
   "vars": {
-    "VAPID_PUBLIC_KEY": "BDj8WtUNEkDXUQPk4yyE7nN48b5C9Wq4VjqMqFTT3h6Lbpu84RAK8mvWNFwaKMuBB7M-ID95jXelisjsMzTm-K4",
-    "VAPID_SUBJECT": "https://personal-tracker-app.pages.dev"
+"VAPID_PUBLIC_KEY": "BOOoE6LtqN0ILx_nPtZZ3Xe-_G6oEqWcXth4PIUP7lfIYl9BgG8yJhOkaCO2rwG0ut-REEAnc_U9ivB3F0j4nto",
+"VAPID_SUBJECT": "https://personal-tracker-app.pages.dev"
   },
   "triggers": {
     "crons": [
