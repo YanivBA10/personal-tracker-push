@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "personal-tracker-push",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-06",
+  "vars": {
+    "VAPID_PUBLIC_KEY": "BDj8WtUNEkDXUQPk4yyE7nN48b5C9Wq4VjqMqFTT3h6Lbpu84RAK8mvWNFwaKMuBB7M-ID95jXelisjsMzTm-K4",
+    "VAPID_SUBJECT": "https://personal-tracker-app.pages.dev"
+  },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
