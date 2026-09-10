@@ -1,24 +1,18 @@
-# Personal Tracker Push Worker
+# Personal Tracker Push Worker — v5
 
-This Worker provides background Web Push reminders for the Personal Tracker PWA.
+Cloudflare Worker for Personal Tracker Web Push notifications.
 
-## Required Cloudflare configuration
+## What changed in v5
+- Removed `KV.list()` from the every-minute cron path.
+- Uses a single registry key (`_meta:client-index:v1`) plus ordinary KV reads instead.
+- Keeps the cron at once per minute without consuming the 1,000/day KV List quota.
+- Registers/repairs a device in the index whenever the app posts `/state`.
+- Sends time-sensitive pushes with Web Push urgency `high`.
+- Keeps a small per-device dispatch log so scheduled time can be compared with Worker send time through `POST /diagnostics`.
 
-1. Create a Workers KV namespace (for example `personal-tracker-clients`).
-2. Add a KV binding to this Worker:
-   - Variable name: `CLIENTS`
-   - KV namespace: the namespace you created.
-3. Add an encrypted secret:
-   - Name: `VAPID_PRIVATE_KEY`
-   - Value: use the value in the separate `PRIVATE-SETUP-NOT-UPLOAD.txt` file.
-4. Deploy the Worker. The cron trigger in `wrangler.jsonc` runs once per minute.
-5. Copy the final Worker URL into the app's `config.js`.
+## Existing Cloudflare configuration
+- KV binding: `CLIENTS`
+- Runtime secret: `VAPID_PRIVATE_KEY`
+- Cron: `* * * * *`
 
-Public VAPID key is already stored in `wrangler.jsonc`.
-The private key must NEVER be committed to a public GitHub repository.
-
-
-## v4.1
-ה-Worker תומך גם בתזכורות כלליות (חד-פעמיות, יומיות ושבועיות) ובתיאור פעולה/תזכורת בגוף ההתראה.
-
-<!-- redeploy -->
+Do not commit the VAPID private key to GitHub.
