@@ -118,8 +118,13 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v2",usesKvList:false,notificationActions:true,taskReminders:true});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v2",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"pull-before-push-v1"});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
+      if(url.pathname==="/pull"&&request.method==="GET"){
+        const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
+        const data=await loadClient(env,deviceId);if(!data?.state)return json({ok:false,error:"device not registered"},404);
+        return json({ok:true,state:data.state,pendingActions:Number((data.pendingActions||[]).length),updatedAt:data.updatedAt||null});
+      }
       if(url.pathname==="/state"&&request.method==="POST"){
         const body=await request.json();if(!validDeviceId(body.deviceId)||!body.subscription?.endpoint||!Array.isArray(body.state?.trackers))return json({ok:false,error:"invalid payload"},400);body.state.reminders||=[];body.state.tasks||=[];
         const previous=await loadClient(env,body.deviceId);const pending=previous?.pendingActions||[];for(const a of pending)applyActionToState(body.state,a);
