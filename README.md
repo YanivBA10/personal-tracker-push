@@ -1,18 +1,10 @@
-# Personal Tracker Push Worker — v5
+# Personal Tracker Push Worker v6
 
-Cloudflare Worker for Personal Tracker Web Push notifications.
+Update goals:
+- Keep the indexed KV scheduler (`usesKvList:false`) and the one-minute cron.
+- Add notification actions: Done / Snooze one hour / Cancel.
+- Add background reminders for Tasks.
+- Reconcile notification actions back into the local PWA state on the next sync.
+- Keep VAPID private key as a Cloudflare secret (do not add it to this repository).
 
-## What changed in v5
-- Removed `KV.list()` from the every-minute cron path.
-- Uses a single registry key (`_meta:client-index:v1`) plus ordinary KV reads instead.
-- Keeps the cron at once per minute without consuming the 1,000/day KV List quota.
-- Registers/repairs a device in the index whenever the app posts `/state`.
-- Sends time-sensitive pushes with Web Push urgency `high`.
-- Keeps a small per-device dispatch log so scheduled time can be compared with Worker send time through `POST /diagnostics`.
-
-## Existing Cloudflare configuration
-- KV binding: `CLIENTS`
-- Runtime secret: `VAPID_PRIVATE_KEY`
-- Cron: `* * * * *`
-
-Do not commit the VAPID private key to GitHub.
+After deploy, `/health` should report `scheduler: indexed-v2`, `usesKvList:false`, `notificationActions:true`, and `taskReminders:true`.
