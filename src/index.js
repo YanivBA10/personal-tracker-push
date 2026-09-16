@@ -85,7 +85,7 @@ function applyActionToState(state,a){
     const d=a.trackerDay||day;tr.done||={};tr.done[`day_${d}`]||={};tr.done[`day_${d}`][a.itemId]=true;
   }
 }
-function buildActionData(deviceId,kind,ids,dateKey,trackerDayNum){return {actionUrl:"https://personal-tracker-push.yanivba10.workers.dev/action",deviceId,kind,dateKey,trackerDay:trackerDayNum,...ids}}
+function buildActionData(deviceId,kind,ids,dateKey,trackerDayNum){return {actionUrl:"https://personal-tracker-push.yanivba10.workers.dev/action",actionMapping:"swap-done-snooze-v1",deviceId,kind,dateKey,trackerDay:trackerDayNum,...ids}}
 function addSnooze(data,a){data.snoozes||=[];data.snoozes.push({id:`snz_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,dueAt:Date.now()+3600000,createdAt:Date.now(),...a})}
 
 async function processSnoozes(env,deviceId,data,now){
@@ -128,7 +128,7 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"android-rtl-swap-v1",hotfix:"6.2.1"});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
       if(url.pathname==="/pull"&&request.method==="GET"){
         const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
@@ -138,14 +138,14 @@ export default {
       if(url.pathname==="/state"&&request.method==="POST"){
         const body=await request.json();if(!validDeviceId(body.deviceId)||!body.subscription?.endpoint||!Array.isArray(body.state?.trackers))return json({ok:false,error:"invalid payload"},400);body.state.reminders||=[];body.state.tasks||=[];
         const previous=await loadClient(env,body.deviceId);const pending=previous?.pendingActions||[];for(const a of pending)applyActionToState(body.state,a);
-        const migratingTo55=body.clientVersion==="5.5"&&previous?.clientVersion!=="5.5";
-        const snoozes=migratingTo55?[]:(previous?.snoozes||[]);
+        const migratingTo551=body.clientVersion==="5.5.1"&&previous?.clientVersion!=="5.5.1";
+        const snoozes=migratingTo551?[]:(previous?.snoozes||[]);
         const next={subscription:body.subscription,timezone:body.timezone||"UTC",clientVersion:body.clientVersion||previous?.clientVersion||"",state:body.state,sent:previous?.sent||{},dispatchLog:previous?.dispatchLog||[],snoozes,pendingActions:[],updatedAt:previous?.updatedAt||Date.now()};
-        if(migratingTo55&&previous?.snoozes?.length)pushLog(next,{kind:"maintenance",workerAt:new Date().toISOString(),status:"cleared-legacy-snoozes",count:previous.snoozes.length});
-        const changed=!previous||pending.length>0||migratingTo55||previous.timezone!==next.timezone||previous.clientVersion!==next.clientVersion||!sameSubscription(previous.subscription,next.subscription)||!sameJson(previous.state,next.state);
+        if(migratingTo551&&previous?.snoozes?.length)pushLog(next,{kind:"maintenance",workerAt:new Date().toISOString(),status:"cleared-test-snoozes-v551",count:previous.snoozes.length});
+        const changed=!previous||pending.length>0||migratingTo551||previous.timezone!==next.timezone||previous.clientVersion!==next.clientVersion||!sameSubscription(previous.subscription,next.subscription)||!sameJson(previous.state,next.state);
         if(changed){next.updatedAt=Date.now();await saveClient(env,body.deviceId,next)}
         if(!previous)await ensureIndexed(env,body.deviceId);
-        return json({ok:true,state:next.state,appliedActions:pending.length,wrote:changed,clearedLegacySnoozes:migratingTo55});
+        return json({ok:true,state:next.state,appliedActions:pending.length,wrote:changed,clearedLegacySnoozes:migratingTo551});
       }
       if(url.pathname==="/action"&&request.method==="POST"){
         const a=await request.json();if(!validDeviceId(a.deviceId)||!["done","snooze","cancel"].includes(a.action))return json({ok:false,error:"invalid action"},400);const data=await loadClient(env,a.deviceId);if(!data?.state)return json({ok:false,error:"device not registered"},404);
@@ -153,7 +153,7 @@ export default {
           let title="תזכורת",body="תזכורת שנדחתה בשעה";if(a.kind==="reminder"){const r=(data.state.reminders||[]).find(x=>x.id===a.reminderId);title=`תזכורת: ${r?.title||"תזכורת"}`;body=r?.description||body}else if(a.kind==="task"){const t=(data.state.tasks||[]).find(x=>x.id===a.taskId);title=`משימה: ${t?.title||"משימה"}`;body=t?.description||body}else if(a.kind==="tracker"){const tr=(data.state.trackers||[]).find(x=>x.id===a.trackerId);title=tr?.name||"מעקב"}
           addSnooze(data,{kind:a.kind,ids:{reminderId:a.reminderId,taskId:a.taskId,trackerId:a.trackerId,itemId:a.itemId},dateKey:a.dateKey,trackerDay:a.trackerDay,title,body,url:a.kind==="task"?`${APP_URL}?openTask=${encodeURIComponent(a.taskId||"")}`:a.kind==="reminder"?`${APP_URL}?openReminder=${encodeURIComponent(a.reminderId||"")}`:`${APP_URL}?openTracker=${encodeURIComponent(a.trackerId||"")}`});
         } else {applyActionToState(data.state,actionRecord);data.pendingActions||=[];data.pendingActions.push(actionRecord)}
-        pushLog(data,{kind:a.kind,action:a.action,actionId:actionRecord.id,workerAt:new Date().toISOString(),status:"action-received"});await saveClient(env,a.deviceId,data);return json({ok:true,actionReceived:a.action,actionId:actionRecord.id});
+        pushLog(data,{kind:a.kind,action:a.action,rawAction:a.rawAction||null,actionId:actionRecord.id,workerAt:new Date().toISOString(),status:"action-received"});await saveClient(env,a.deviceId,data);return json({ok:true,actionReceived:a.action,actionId:actionRecord.id});
       }
       if(url.pathname==="/diagnostics"&&request.method==="POST"){const body=await request.json();if(!validDeviceId(body.deviceId))return json({ok:false,error:"invalid device"},400);const data=await loadClient(env,body.deviceId);if(!data)return json({ok:false,error:"device not registered"},404);return json({ok:true,serverNow:new Date().toISOString(),timezone:data.timezone||"UTC",updatedAt:data.updatedAt||null,clientVersion:data.clientVersion||null,subscriptionActive:!!data.subscription?.endpoint,subscriptionEndpointTail:data.subscription?.endpoint?data.subscription.endpoint.slice(-18):null,dispatchLog:(data.dispatchLog||[]).slice(-40),pendingActions:(data.pendingActions||[]).length,snoozes:(data.snoozes||[]).length,stateCounts:{trackers:(data.state?.trackers||[]).length,reminders:(data.state?.reminders||[]).length,tasks:(data.state?.tasks||[]).length}})}
       if(url.pathname==="/test"&&request.method==="POST"){const body=await request.json();if(!validDeviceId(body.deviceId))return json({ok:false,error:"invalid device"},400);const data=await loadClient(env,body.deviceId);if(!data?.subscription)return json({ok:false,error:"device not registered"},404);await send(env,data.subscription,{title:"המעקבים שלי",body:"התראת הרקע פועלת ✓",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`pt-test-${Date.now()}`,data:{url:APP_URL,kind:"test"}});pushLog(data,{kind:"test",workerAt:new Date().toISOString(),status:"sent"});await saveClient(env,body.deviceId,data);return json({ok:true})}

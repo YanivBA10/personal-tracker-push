@@ -1,4 +1,4 @@
-# Personal Tracker Push Worker v6.2 — Stability Update
+# Personal Tracker Push Worker v6.2.1 — Stability Update
 
 Goals:
 - Keep the indexed KV scheduler (`usesKvList:false`) and one-minute cron.
