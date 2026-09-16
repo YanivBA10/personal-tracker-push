@@ -1,12 +1,22 @@
-# Personal Tracker Push Worker v6.1
+# Personal Tracker Push Worker v6.2 — Stability Update
 
-Update goals:
-- Keep the indexed KV scheduler (`usesKvList:false`) and the one-minute cron.
-- Add notification actions: Done / Snooze one hour / Cancel.
-- Add background reminders for Tasks.
-- Reconcile notification actions back into the local PWA state on the next sync.
-- Keep VAPID private key as a Cloudflare secret (do not add it to this repository).
+Goals:
+- Keep the indexed KV scheduler (`usesKvList:false`) and one-minute cron.
+- Suppress unnecessary KV writes when client state/subscription/timezone did not change.
+- Avoid stale remote state overwriting newer local PWA data.
+- Add a 10-minute catch-up window for scheduled reminders, so a missed cron minute does not lose the reminder.
+- Keep notification actions: Done / Snooze one hour. (`Cancel` remains an in-app action rather than a notification button.)
+- Add richer diagnostics for subscription state, last server events, pending actions and snoozes.
+- Preserve task reminders.
+- On first v5.5 client sync, clear legacy snoozes from earlier unstable tests.
+- Keep VAPID private key as a Cloudflare secret; never commit it to this repository.
 
-After deploy, `/health` should report `scheduler: indexed-v2`, `usesKvList:false`, `notificationActions:true`, and `taskReminders:true`.
-
-- v6.1: adds a pull-before-push reconciliation endpoint so notification actions cannot be lost when the PWA resumes.
+After deploy, `/health` should report:
+- `scheduler: indexed-v3`
+- `usesKvList: false`
+- `notificationActions: true`
+- `taskReminders: true`
+- `actionSync: server-merge-v2`
+- `writeSuppression: true`
+- `catchUpMinutes: 10`
+- `diagnosticsV2: true`

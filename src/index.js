@@ -2,7 +2,8 @@ import { sendPushNotification } from "@mmmike/web-push/send";
 
 const APP_URL = "https://personal-tracker-app.pages.dev/";
 const INDEX_KEY = "_meta:client-index:v1";
-const MAX_LOGS = 80;
+const MAX_LOGS = 120;
+const CATCH_UP_MINUTES = 10;
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -35,6 +36,12 @@ function localNow(timeZone, date=new Date()){
 }
 function localDateKey(local){return `${local.year}-${String(local.month).padStart(2,"0")}-${String(local.day).padStart(2,"0")}`}
 function localHm(local){return `${local.hour}:${local.minute}`}
+function hmMinutes(hm){const [h,m]=(hm||'').split(':').map(Number);return Number.isFinite(h)&&Number.isFinite(m)?h*60+m:null}
+function dueWithinWindow(targetHm,local,windowMinutes=CATCH_UP_MINUTES){
+  const target=hmMinutes(targetHm),now=Number(local.hour)*60+Number(local.minute);
+  if(target==null||!Number.isFinite(now))return false;
+  const late=now-target;return late>=0&&late<=windowMinutes;
+}
 function localScheduledIso(dateKey,time,timezone){return `${dateKey}T${time}:00[${timezone||"UTC"}]`}
 function pushLog(data,entry){data.dispatchLog||=[];data.dispatchLog.push(entry);if(data.dispatchLog.length>MAX_LOGS)data.dispatchLog.splice(0,data.dispatchLog.length-MAX_LOGS)}
 async function send(env,subscription,payload){
@@ -46,6 +53,9 @@ async function loadClient(env,deviceId){if(!env.CLIENTS)throw new Error("CLIENTS
 async function saveClient(env,deviceId,data){if(!env.CLIENTS)throw new Error("CLIENTS KV binding is not configured");await env.CLIENTS.put(clientKey(deviceId),JSON.stringify(data))}
 async function loadIndex(env){if(!env.CLIENTS)throw new Error("CLIENTS KV binding is not configured");const v=await env.CLIENTS.get(INDEX_KEY,"json");return Array.isArray(v?.clients)?v:{version:1,clients:[]}}
 async function ensureIndexed(env,deviceId){const idx=await loadIndex(env);if(idx.clients.includes(deviceId))return false;idx.clients.push(deviceId);idx.updatedAt=Date.now();await env.CLIENTS.put(INDEX_KEY,JSON.stringify(idx));return true}
+function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}}
+function sameSubscription(a,b){return sameJson(a||null,b||null)}
+
 
 function reminderOccurs(r,local,dateKey){
   if(r.status!=="active"||!r.date)return false;const start=parseYmd(r.date);if(!start.y)return false;
@@ -84,7 +94,7 @@ async function processSnoozes(env,deviceId,data,now){
   for(const s of data.snoozes){
     if(Number(s.dueAt)>now.getTime()){keep.push(s);continue}
     try{
-      await send(env,data.subscription,{title:s.title||"תזכורת",body:s.body||"תזכורת שנדחתה בשעה",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`snooze-${s.id}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"},{action:"cancel",title:"ביטול"}],data:{url:s.url||APP_URL,...buildActionData(deviceId,s.kind,s.ids||{},s.dateKey,s.trackerDay)}});
+      await send(env,data.subscription,{title:s.title||"תזכורת",body:s.body||"תזכורת שנדחתה בשעה",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`snooze-${s.id}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"}],data:{url:s.url||APP_URL,...buildActionData(deviceId,s.kind,s.ids||{},s.dateKey,s.trackerDay)}});
       pushLog(data,{kind:s.kind,snoozeId:s.id,workerAt:now.toISOString(),status:"sent-snooze"});changed=true;
     }catch(err){keep.push(s);pushLog(data,{kind:s.kind,snoozeId:s.id,workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
   }
@@ -97,18 +107,18 @@ async function processClient(env,deviceId){
   for(const tr of data.state.trackers.filter(t=>t.status==="active")){
     const day=trackerDay(tr,local);if(day<1||day>trackerEndDay(tr))continue;const stage=stageForDay(tr,day);if(!stage)continue;
     for(const t of (stage.tasks||[])){
-      if(!t.notify||t.time!==hm||!taskOccurs(t,day,stage,local.weekday)||isDone(tr,day,t.id))continue;
+      if(!t.notify||!dueWithinWindow(t.time,local)||!taskOccurs(t,day,stage,local.weekday)||isDone(tr,day,t.id))continue;
       const sentKey=`${dateKey}|tracker|${tr.id}|${t.id}`;if(data.sent[sentKey])continue;
-      try{await send(env,data.subscription,{title:tr.name||"Personal Tracker",body:t.description?.trim()||`הגיע הזמן: ${t.label||"פעולה"}`,icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`pt-${tr.id}-${t.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"},{action:"cancel",title:"ביטול"}],data:{url:`${APP_URL}?openTracker=${encodeURIComponent(tr.id)}`,...buildActionData(deviceId,"tracker",{trackerId:tr.id,itemId:t.id},dateKey,day)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"tracker",trackerId:tr.id,itemId:t.id,scheduledFor:localScheduledIso(dateKey,t.time,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"tracker",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
+      try{await send(env,data.subscription,{title:tr.name||"Personal Tracker",body:t.description?.trim()||`הגיע הזמן: ${t.label||"פעולה"}`,icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`pt-${tr.id}-${t.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"}],data:{url:`${APP_URL}?openTracker=${encodeURIComponent(tr.id)}`,...buildActionData(deviceId,"tracker",{trackerId:tr.id,itemId:t.id},dateKey,day)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"tracker",trackerId:tr.id,itemId:t.id,scheduledFor:localScheduledIso(dateKey,t.time,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"tracker",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
     }
   }
   for(const r of (data.state.reminders||[])){
-    if(!r.notify||r.time!==hm||!reminderOccurs(r,local,dateKey)||r.doneDates?.[dateKey])continue;const sentKey=`${dateKey}|reminder|${r.id}`;if(data.sent[sentKey])continue;
-    try{await send(env,data.subscription,{title:`תזכורת: ${r.title||"משימה"}`,body:r.description?.trim()||"הגיע הזמן לבצע את התזכורת.",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`ptr-${r.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"},{action:"cancel",title:"ביטול"}],data:{url:`${APP_URL}?openReminder=${encodeURIComponent(r.id)}`,...buildActionData(deviceId,"reminder",{reminderId:r.id},dateKey)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"reminder",reminderId:r.id,scheduledFor:localScheduledIso(dateKey,r.time,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"reminder",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
+    if(!r.notify||!dueWithinWindow(r.time,local)||!reminderOccurs(r,local,dateKey)||r.doneDates?.[dateKey])continue;const sentKey=`${dateKey}|reminder|${r.id}`;if(data.sent[sentKey])continue;
+    try{await send(env,data.subscription,{title:`תזכורת: ${r.title||"משימה"}`,body:r.description?.trim()||"הגיע הזמן לבצע את התזכורת.",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`ptr-${r.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"}],data:{url:`${APP_URL}?openReminder=${encodeURIComponent(r.id)}`,...buildActionData(deviceId,"reminder",{reminderId:r.id},dateKey)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"reminder",reminderId:r.id,scheduledFor:localScheduledIso(dateKey,r.time,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"reminder",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
   }
   for(const t of (data.state.tasks||[]).filter(x=>x.status!=="completed")){
-    if(!t.reminderDate||!t.reminderTime||t.reminderDate!==dateKey||t.reminderTime!==hm)continue;const sentKey=`${dateKey}|task|${t.id}`;if(data.sent[sentKey])continue;
-    try{await send(env,data.subscription,{title:`משימה: ${t.title||"משימה"}`,body:t.description?.trim()||"הגיע הזמן לטפל במשימה.",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`ptt-${t.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"},{action:"cancel",title:"ביטול"}],data:{url:`${APP_URL}?openTask=${encodeURIComponent(t.id)}`,...buildActionData(deviceId,"task",{taskId:t.id},dateKey)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"task",taskId:t.id,scheduledFor:localScheduledIso(dateKey,t.reminderTime,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"task",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
+    if(!t.reminderDate||!t.reminderTime||t.reminderDate!==dateKey||!dueWithinWindow(t.reminderTime,local))continue;const sentKey=`${dateKey}|task|${t.id}`;if(data.sent[sentKey])continue;
+    try{await send(env,data.subscription,{title:`משימה: ${t.title||"משימה"}`,body:t.description?.trim()||"הגיע הזמן לטפל במשימה.",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`ptt-${t.id}-${dateKey}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"}],data:{url:`${APP_URL}?openTask=${encodeURIComponent(t.id)}`,...buildActionData(deviceId,"task",{taskId:t.id},dateKey)}});data.sent[sentKey]=Date.now();pushLog(data,{kind:"task",taskId:t.id,scheduledFor:localScheduledIso(dateKey,t.reminderTime,data.timezone),workerAt:now.toISOString(),status:"sent"});changed=true}catch(err){pushLog(data,{kind:"task",workerAt:now.toISOString(),status:"error",error:String(err?.message||err)});changed=true}
   }
   const cutoff=Date.now()-45*86400000;for(const [k,v] of Object.entries(data.sent))if(Number(v)<cutoff){delete data.sent[k];changed=true}
   if(changed)await env.CLIENTS.put(keyName,JSON.stringify(data));
@@ -118,7 +128,7 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v2",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"pull-before-push-v1"});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
       if(url.pathname==="/pull"&&request.method==="GET"){
         const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
@@ -128,17 +138,24 @@ export default {
       if(url.pathname==="/state"&&request.method==="POST"){
         const body=await request.json();if(!validDeviceId(body.deviceId)||!body.subscription?.endpoint||!Array.isArray(body.state?.trackers))return json({ok:false,error:"invalid payload"},400);body.state.reminders||=[];body.state.tasks||=[];
         const previous=await loadClient(env,body.deviceId);const pending=previous?.pendingActions||[];for(const a of pending)applyActionToState(body.state,a);
-        const next={subscription:body.subscription,timezone:body.timezone||"UTC",state:body.state,sent:previous?.sent||{},dispatchLog:previous?.dispatchLog||[],snoozes:previous?.snoozes||[],pendingActions:[],updatedAt:Date.now()};await saveClient(env,body.deviceId,next);await ensureIndexed(env,body.deviceId);return json({ok:true,state:next.state,appliedActions:pending.length});
+        const migratingTo55=body.clientVersion==="5.5"&&previous?.clientVersion!=="5.5";
+        const snoozes=migratingTo55?[]:(previous?.snoozes||[]);
+        const next={subscription:body.subscription,timezone:body.timezone||"UTC",clientVersion:body.clientVersion||previous?.clientVersion||"",state:body.state,sent:previous?.sent||{},dispatchLog:previous?.dispatchLog||[],snoozes,pendingActions:[],updatedAt:previous?.updatedAt||Date.now()};
+        if(migratingTo55&&previous?.snoozes?.length)pushLog(next,{kind:"maintenance",workerAt:new Date().toISOString(),status:"cleared-legacy-snoozes",count:previous.snoozes.length});
+        const changed=!previous||pending.length>0||migratingTo55||previous.timezone!==next.timezone||previous.clientVersion!==next.clientVersion||!sameSubscription(previous.subscription,next.subscription)||!sameJson(previous.state,next.state);
+        if(changed){next.updatedAt=Date.now();await saveClient(env,body.deviceId,next)}
+        if(!previous)await ensureIndexed(env,body.deviceId);
+        return json({ok:true,state:next.state,appliedActions:pending.length,wrote:changed,clearedLegacySnoozes:migratingTo55});
       }
       if(url.pathname==="/action"&&request.method==="POST"){
         const a=await request.json();if(!validDeviceId(a.deviceId)||!["done","snooze","cancel"].includes(a.action))return json({ok:false,error:"invalid action"},400);const data=await loadClient(env,a.deviceId);if(!data?.state)return json({ok:false,error:"device not registered"},404);
-        const actionRecord={...a,at:Date.now()};if(a.action==="snooze"){
+        const actionRecord={id:`act_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,...a,at:Number(a.at)||Date.now()};if(a.action==="snooze"){
           let title="תזכורת",body="תזכורת שנדחתה בשעה";if(a.kind==="reminder"){const r=(data.state.reminders||[]).find(x=>x.id===a.reminderId);title=`תזכורת: ${r?.title||"תזכורת"}`;body=r?.description||body}else if(a.kind==="task"){const t=(data.state.tasks||[]).find(x=>x.id===a.taskId);title=`משימה: ${t?.title||"משימה"}`;body=t?.description||body}else if(a.kind==="tracker"){const tr=(data.state.trackers||[]).find(x=>x.id===a.trackerId);title=tr?.name||"מעקב"}
           addSnooze(data,{kind:a.kind,ids:{reminderId:a.reminderId,taskId:a.taskId,trackerId:a.trackerId,itemId:a.itemId},dateKey:a.dateKey,trackerDay:a.trackerDay,title,body,url:a.kind==="task"?`${APP_URL}?openTask=${encodeURIComponent(a.taskId||"")}`:a.kind==="reminder"?`${APP_URL}?openReminder=${encodeURIComponent(a.reminderId||"")}`:`${APP_URL}?openTracker=${encodeURIComponent(a.trackerId||"")}`});
         } else {applyActionToState(data.state,actionRecord);data.pendingActions||=[];data.pendingActions.push(actionRecord)}
-        pushLog(data,{kind:a.kind,action:a.action,workerAt:new Date().toISOString(),status:"action"});await saveClient(env,a.deviceId,data);return json({ok:true});
+        pushLog(data,{kind:a.kind,action:a.action,actionId:actionRecord.id,workerAt:new Date().toISOString(),status:"action-received"});await saveClient(env,a.deviceId,data);return json({ok:true,actionReceived:a.action,actionId:actionRecord.id});
       }
-      if(url.pathname==="/diagnostics"&&request.method==="POST"){const body=await request.json();if(!validDeviceId(body.deviceId))return json({ok:false,error:"invalid device"},400);const data=await loadClient(env,body.deviceId);if(!data)return json({ok:false,error:"device not registered"},404);return json({ok:true,serverNow:new Date().toISOString(),timezone:data.timezone||"UTC",updatedAt:data.updatedAt||null,dispatchLog:(data.dispatchLog||[]).slice(-30),pendingActions:(data.pendingActions||[]).length,snoozes:(data.snoozes||[]).length})}
+      if(url.pathname==="/diagnostics"&&request.method==="POST"){const body=await request.json();if(!validDeviceId(body.deviceId))return json({ok:false,error:"invalid device"},400);const data=await loadClient(env,body.deviceId);if(!data)return json({ok:false,error:"device not registered"},404);return json({ok:true,serverNow:new Date().toISOString(),timezone:data.timezone||"UTC",updatedAt:data.updatedAt||null,clientVersion:data.clientVersion||null,subscriptionActive:!!data.subscription?.endpoint,subscriptionEndpointTail:data.subscription?.endpoint?data.subscription.endpoint.slice(-18):null,dispatchLog:(data.dispatchLog||[]).slice(-40),pendingActions:(data.pendingActions||[]).length,snoozes:(data.snoozes||[]).length,stateCounts:{trackers:(data.state?.trackers||[]).length,reminders:(data.state?.reminders||[]).length,tasks:(data.state?.tasks||[]).length}})}
       if(url.pathname==="/test"&&request.method==="POST"){const body=await request.json();if(!validDeviceId(body.deviceId))return json({ok:false,error:"invalid device"},400);const data=await loadClient(env,body.deviceId);if(!data?.subscription)return json({ok:false,error:"device not registered"},404);await send(env,data.subscription,{title:"המעקבים שלי",body:"התראת הרקע פועלת ✓",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`pt-test-${Date.now()}`,data:{url:APP_URL,kind:"test"}});pushLog(data,{kind:"test",workerAt:new Date().toISOString(),status:"sent"});await saveClient(env,body.deviceId,data);return json({ok:true})}
       return json({ok:false,error:"not found"},404);
     }catch(err){console.log(err);return json({ok:false,error:String(err?.message||err)},500)}
