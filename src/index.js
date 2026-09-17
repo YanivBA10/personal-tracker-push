@@ -56,7 +56,6 @@ async function ensureIndexed(env,deviceId){const idx=await loadIndex(env);if(idx
 function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}}
 function sameSubscription(a,b){return sameJson(a||null,b||null)}
 
-
 function reminderOccurs(r,local,dateKey){
   if(r.status!=="active"||!r.date)return false;const start=parseYmd(r.date);if(!start.y)return false;
   const todayNum=dayNumber(local.year,local.month,local.day),startNum=dayNumber(start.y,start.m,start.d);if(todayNum<startNum)return false;
@@ -85,7 +84,7 @@ function applyActionToState(state,a){
     const d=a.trackerDay||day;tr.done||={};tr.done[`day_${d}`]||={};tr.done[`day_${d}`][a.itemId]=true;
   }
 }
-function buildActionData(deviceId,kind,ids,dateKey,trackerDayNum){return {actionUrl:"https://personal-tracker-push.yanivba10.workers.dev/action",actionMapping:"swap-done-snooze-v1",deviceId,kind,dateKey,trackerDay:trackerDayNum,...ids}}
+function buildActionData(deviceId,kind,ids,dateKey,trackerDayNum){return {actionUrl:"https://personal-tracker-push.yanivba10.workers.dev/action",actionMapping:"direct-action-v1",deviceId,kind,dateKey,trackerDay:trackerDayNum,...ids}}
 function addSnooze(data,a){data.snoozes||=[];data.snoozes.push({id:`snz_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,dueAt:Date.now()+3600000,createdAt:Date.now(),...a})}
 
 async function processSnoozes(env,deviceId,data,now){
@@ -128,7 +127,7 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"android-rtl-swap-v1",hotfix:"6.2.1"});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"direct-action-v1",hotfix:"6.2.2"});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
       if(url.pathname==="/pull"&&request.method==="GET"){
         const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
@@ -139,13 +138,15 @@ export default {
         const body=await request.json();if(!validDeviceId(body.deviceId)||!body.subscription?.endpoint||!Array.isArray(body.state?.trackers))return json({ok:false,error:"invalid payload"},400);body.state.reminders||=[];body.state.tasks||=[];
         const previous=await loadClient(env,body.deviceId);const pending=previous?.pendingActions||[];for(const a of pending)applyActionToState(body.state,a);
         const migratingTo551=body.clientVersion==="5.5.1"&&previous?.clientVersion!=="5.5.1";
-        const snoozes=migratingTo551?[]:(previous?.snoozes||[]);
-        const next={subscription:body.subscription,timezone:body.timezone||"UTC",clientVersion:body.clientVersion||previous?.clientVersion||"",state:body.state,sent:previous?.sent||{},dispatchLog:previous?.dispatchLog||[],snoozes,pendingActions:[],updatedAt:previous?.updatedAt||Date.now()};
-        if(migratingTo551&&previous?.snoozes?.length)pushLog(next,{kind:"maintenance",workerAt:new Date().toISOString(),status:"cleared-test-snoozes-v551",count:previous.snoozes.length});
-        const changed=!previous||pending.length>0||migratingTo551||previous.timezone!==next.timezone||previous.clientVersion!==next.clientVersion||!sameSubscription(previous.subscription,next.subscription)||!sameJson(previous.state,next.state);
+        const cleaning622=body.clientVersion==="5.5.1"&&previous?.hotfix622Cleaned!==true;
+        const clearLegacySnoozes=migratingTo551||cleaning622;
+        const snoozes=clearLegacySnoozes?[]:(previous?.snoozes||[]);
+        const next={subscription:body.subscription,timezone:body.timezone||"UTC",clientVersion:body.clientVersion||previous?.clientVersion||"",state:body.state,sent:previous?.sent||{},dispatchLog:previous?.dispatchLog||[],snoozes,pendingActions:[],hotfix622Cleaned:previous?.hotfix622Cleaned===true||cleaning622,updatedAt:previous?.updatedAt||Date.now()};
+        if(clearLegacySnoozes&&previous?.snoozes?.length)pushLog(next,{kind:"maintenance",workerAt:new Date().toISOString(),status:"cleared-legacy-snoozes-v622",count:previous.snoozes.length});
+        const changed=!previous||pending.length>0||migratingTo551||cleaning622||previous.timezone!==next.timezone||previous.clientVersion!==next.clientVersion||!sameSubscription(previous.subscription,next.subscription)||!sameJson(previous.state,next.state);
         if(changed){next.updatedAt=Date.now();await saveClient(env,body.deviceId,next)}
         if(!previous)await ensureIndexed(env,body.deviceId);
-        return json({ok:true,state:next.state,appliedActions:pending.length,wrote:changed,clearedLegacySnoozes:migratingTo551});
+        return json({ok:true,state:next.state,appliedActions:pending.length,wrote:changed,clearedLegacySnoozes:clearLegacySnoozes});
       }
       if(url.pathname==="/action"&&request.method==="POST"){
         const a=await request.json();if(!validDeviceId(a.deviceId)||!["done","snooze","cancel"].includes(a.action))return json({ok:false,error:"invalid action"},400);const data=await loadClient(env,a.deviceId);if(!data?.state)return json({ok:false,error:"device not registered"},404);
