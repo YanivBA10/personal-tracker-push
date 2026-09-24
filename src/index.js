@@ -69,15 +69,15 @@ function applyActionToState(state,a){
   if(a.kind==="reminder"){
     const r=state.reminders.find(x=>x.id===a.reminderId);if(!r)return;
     if(a.action==="done"){
-      if((r.repeat||"once")==="once"){r.status="completed";r.completedAt=a.at||Date.now();r.completionReason="done"}
-      else{r.doneDates||={};r.doneDates[a.dateKey]=true}
+      if((r.repeat||"once")==="once"){r.status="completed";r.completedAt=a.at||Date.now();r.completionReason="done";r.snoozedUntil=null}
+      else{r.doneDates||={};r.doneDates[a.dateKey]=true;r.snoozedUntil=null}
     } else if(a.action==="cancel"){
-      if((r.repeat||"once")==="once"){r.status="completed";r.completedAt=a.at||Date.now();r.completionReason="cancelled"}
-      else{r.doneDates||={};r.doneDates[a.dateKey]=true;r.skippedDates||={};r.skippedDates[a.dateKey]=true}
+      if((r.repeat||"once")==="once"){r.status="completed";r.completedAt=a.at||Date.now();r.completionReason="cancelled";r.snoozedUntil=null}
+      else{r.doneDates||={};r.doneDates[a.dateKey]=true;r.skippedDates||={};r.skippedDates[a.dateKey]=true;r.snoozedUntil=null}
     }
   } else if(a.kind==="task"){
     const t=state.tasks.find(x=>x.id===a.taskId);if(!t)return;
-    if(a.action==="done"){t.status="completed";t.completedAt=a.at||Date.now();for(const s of (t.subtasks||[]))s.done=true}
+    if(a.action==="done"){t.status="completed";t.completedAt=a.at||Date.now();t.snoozedUntil=null;for(const s of (t.subtasks||[]))s.done=true}
     if(a.action==="cancel"){t.reminderDate="";t.reminderTime=""}
   } else if(a.kind==="tracker" && a.action==="done"){
     const tr=state.trackers.find(x=>x.id===a.trackerId);if(!tr)return;const day=trackerDay(tr,a.local||localNow("UTC"));
@@ -147,7 +147,7 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"direct-action-v1",hotfix:"6.2.3",staleSnoozeSuppression:true});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"direct-action-v1",hotfix:"6.2.4",staleSnoozeSuppression:true,completionClearsSnooze:true});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
       if(url.pathname==="/pull"&&request.method==="GET"){
         const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
