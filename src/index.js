@@ -86,11 +86,31 @@ function applyActionToState(state,a){
 }
 function buildActionData(deviceId,kind,ids,dateKey,trackerDayNum){return {actionUrl:"https://personal-tracker-push.yanivba10.workers.dev/action",actionMapping:"direct-action-v1",deviceId,kind,dateKey,trackerDay:trackerDayNum,...ids}}
 function addSnooze(data,a){data.snoozes||=[];data.snoozes.push({id:`snz_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,dueAt:Date.now()+3600000,createdAt:Date.now(),...a})}
+function snoozeStillRelevant(state,s){
+  if(!state||!s)return false;
+  if(s.kind==="reminder"){
+    const r=(state.reminders||[]).find(x=>x.id===s.ids?.reminderId);
+    if(!r||r.status==="completed")return false;
+    if((r.repeat||"once")!=="once"&&r.doneDates?.[s.dateKey])return false;
+    return true;
+  }
+  if(s.kind==="task"){
+    const t=(state.tasks||[]).find(x=>x.id===s.ids?.taskId);
+    return !!t&&t.status!=="completed";
+  }
+  if(s.kind==="tracker"){
+    const tr=(state.trackers||[]).find(x=>x.id===s.ids?.trackerId);
+    if(!tr||tr.status!=="active")return false;
+    return !isDone(tr,Number(s.trackerDay||0),s.ids?.itemId);
+  }
+  return true;
+}
 
 async function processSnoozes(env,deviceId,data,now){
   if(!Array.isArray(data.snoozes)||!data.snoozes.length)return false;let changed=false;
   const keep=[];
   for(const s of data.snoozes){
+    if(!snoozeStillRelevant(data.state,s)){pushLog(data,{kind:s.kind,snoozeId:s.id,workerAt:now.toISOString(),status:"discarded-stale-snooze"});changed=true;continue}
     if(Number(s.dueAt)>now.getTime()){keep.push(s);continue}
     try{
       await send(env,data.subscription,{title:s.title||"תזכורת",body:s.body||"תזכורת שנדחתה בשעה",icon:`${APP_URL}icon.svg`,badge:`${APP_URL}icon.svg`,tag:`snooze-${s.id}`,actions:[{action:"done",title:"בוצע"},{action:"snooze",title:"עוד שעה"}],data:{url:s.url||APP_URL,...buildActionData(deviceId,s.kind,s.ids||{},s.dateKey,s.trackerDay)}});
@@ -127,7 +147,7 @@ export default {
   async fetch(request,env){
     if(request.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders});const url=new URL(request.url);
     try{
-      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"direct-action-v1",hotfix:"6.2.2"});
+      if(url.pathname==="/health")return json({ok:true,kv:!!env.CLIENTS,privateKey:!!env.VAPID_PRIVATE_KEY,scheduler:"indexed-v3",usesKvList:false,notificationActions:true,taskReminders:true,actionSync:"server-merge-v2",writeSuppression:true,catchUpMinutes:CATCH_UP_MINUTES,diagnosticsV2:true,actionMappingFix:"direct-action-v1",hotfix:"6.2.3",staleSnoozeSuppression:true});
       if(url.pathname==="/config")return json({publicKey:env.VAPID_PUBLIC_KEY});
       if(url.pathname==="/pull"&&request.method==="GET"){
         const deviceId=url.searchParams.get("deviceId")||"";if(!validDeviceId(deviceId))return json({ok:false,error:"invalid device"},400);
